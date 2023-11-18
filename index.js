@@ -315,6 +315,12 @@ app.post('/reservation',async(req,res)=>{
 const reservation = req.body;
 const result = await reservationCollection.insertOne(reservation);
 res.send(result)
+});
+
+// ============ load payment data for bookings ================
+app.get('/bookingsHistory',async(req,res)=>{
+  const result = await paymentsCollection.find().toArray();
+  res.send(result)
 })
 
 
