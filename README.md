@@ -1,6 +1,68 @@
-# Meal-Cage Server 🍔
+# Meal-Cage Server 🍔 (Modular Monolith)
 
-The backend server for Meal-Cage, a robust RESTful API built to handle restaurant operations, user management, and secure transactions.
+The backend server for Meal-Cage, built using a **Modular Monolith** architecture. This design ensures that core business logic is encapsulated within discrete modules, making the system maintainable, scalable, and easy to transition to microservices if needed.
+
+## 🏗️ Architecture View
+
+Meal-Cage Server follows a modular monolith pattern where each business domain is isolated into its own module within the `src/modules` directory.
+
+```mermaid
+graph TD
+    subgraph Client Layer
+        WebClient[React Client]
+    end
+
+    subgraph API Gateway / Express
+        Router[Express Router]
+        Middleware[Auth & Validation Middleware]
+    end
+
+    subgraph Business Modules (Modular Monolith)
+        AuthMod[Auth Module]
+        UserMod[Users Module]
+        MenuMod[Menu Module]
+        CartMod[Carts Module]
+        PayMod[Payments Module]
+        ResMod[Reservations Module]
+        RevMod[Reviews Module]
+        GiftMod[GiftCards Module]
+        LoyalMod[Loyalty Module]
+        NewsMod[Newsletter Module]
+        ContMod[Contact Module]
+    end
+
+    subgraph Data Layer
+        MongoDB[(MongoDB Atlas)]
+    end
+
+    WebClient --> Router
+    Router --> Middleware
+    Middleware --> AuthMod
+    Middleware --> UserMod
+    
+    %% Typical Module Interactions
+    CartMod -.-> MenuMod
+    PayMod -.-> CartMod
+    ResMod -.-> UserMod
+    
+    AuthMod & UserMod & MenuMod & CartMod & PayMod & ResMod & RevMod & GiftMod & LoyalMod & NewsMod & ContMod --> MongoDB
+```
+
+## 📂 Core Business Modules
+
+The server is organized into 11 distinct modules, each responsible for a specific domain:
+
+1.  **Auth**: Security and session management (JWT).
+2.  **Users**: User profiles and Role-Based Access Control (RBAC).
+3.  **Menu**: Comprehensive restaurant catalog management.
+4.  **Carts**: Persistent shopping cart functionality.
+5.  **Payments**: Secure checkout integrated with Stripe.
+6.  **Reservations**: Table booking and scheduling.
+7.  **Reviews**: Customer feedback and rating system.
+8.  **GiftCards**: Digital gift card issuance and redemption.
+9.  **Loyalty**: Reward points and customer loyalty programs.
+10. **Newsletter**: Marketing and subscription management.
+11. **Contact**: Inquiry handling and customer support.
 
 ## 🛠️ Tech Stack
 
@@ -9,33 +71,6 @@ The backend server for Meal-Cage, a robust RESTful API built to handle restauran
 - **Database**: [MongoDB](https://www.mongodb.com/) with [Mongoose](https://mongoosejs.com/)
 - **Authentication**: [JSON Web Token (JWT)](https://jwt.io/)
 - **Payments**: [Stripe](https://stripe.com/)
-
-## 🏗️ Architecture View
-
-```mermaid
-graph LR
-    Client[React Client] -->|HTTP Requests| API[Express API]
-    
-    subgraph Server Internals
-        API --> Middleware[Auth & Validation Middleware]
-        Middleware --> Controllers[Module Business Logic]
-        Controllers --> Models[Mongoose Models]
-    end
-    
-    Models --> MongoDB[(MongoDB Atlas)]
-    Controllers --> Stripe[Stripe Payment Processing]
-```
-
-## 📂 API Modules
-
-The server is organized into modular components:
-
-- **Auth**: Secure JWT-based authentication.
-- **Users**: User profiles and role-based access control (RBAC).
-- **Menu**: CRUD operations for restaurant offerings.
-- **Cart**: Managing user selection for ordering.
-- **Bookings**: Reservation and table management.
-- **Payments**: Handling secure checkout flows.
 
 ## ⚙️ Getting Started
 
@@ -54,14 +89,7 @@ The server is organized into modular components:
    ```bash
    npm install
    ```
-3. Create a `.env` file in the root and add your configuration:
-   ```env
-   PORT=5000
-   DB_USER=your_db_user
-   DB_PASS=your_db_password
-   ACCESS_TOKEN_SECRETE=your_jwt_secret
-   PAYMENT_SECRETE_KEY=your_stripe_secret
-   ```
+3. Create a `.env` file in the root and add your configuration (see `.env.example` for details).
 4. Start the server:
    ```bash
    # Development mode (with nodemon)
@@ -73,7 +101,7 @@ The server is organized into modular components:
 
 ## 🚀 Deployment
 
-This server is optimized for deployment on **Vercel**. Ensure your `engines` in `package.json` is set to `"node": "24.x"` for compatibility.
+This server is optimized for deployment on **Vercel**. The Node.js engine is pinned to `24.x` for build stability.
 
 ## 📄 License
 
