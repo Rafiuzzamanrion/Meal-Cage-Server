@@ -1,9 +1,9 @@
 const mongoose = require('mongoose');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('crypto');
 
 // Helper to generate unique gift card codes like MEALCAGE-XXXX-YYYY
 const generateCode = () => {
-    const seg = () => uuidv4().replace(/-/g, '').toUpperCase().substring(0, 4);
+    const seg = () => randomUUID().replace(/-/g, '').toUpperCase().substring(0, 4);
     return `MEALCAGE-${seg()}-${seg()}`;
 };
 
