@@ -5,12 +5,16 @@ const {
     createReservation,
     getAllReservations,
     updateReservationStatus,
+    getUserReservations
 } = require('./reservations.controller');
 
 const router = express.Router();
 
 // POST /reservation — create reservation
 router.post('/reservation', verifyJWT, createReservation);
+
+// GET /reservationHistory — fetch user-specific reservations
+router.get('/reservationHistory', verifyJWT, getUserReservations);
 
 // GET /bookingsHistory — all reservations (admin)
 router.get('/bookingsHistory', verifyJWT, verifyAdmin, getAllReservations);

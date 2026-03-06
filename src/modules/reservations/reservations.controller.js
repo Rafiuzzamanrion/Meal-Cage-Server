@@ -20,6 +20,20 @@ const getAllReservations = async (req, res, next) => {
     }
 };
 
+// GET /reservationHistory — reservations for a specific user
+const getUserReservations = async (req, res, next) => {
+    try {
+        const { email } = req.query;
+        if (!email) {
+            return res.status(400).json({ error: true, message: "Email is required" });
+        }
+        const reservations = await Reservation.find({ email }).sort({ createdAt: -1 });
+        res.json(reservations);
+    } catch (err) {
+        next(err);
+    }
+};
+
 // PATCH /bookingsHistory/:id — update reservation status (e.g., "delivered")
 const updateReservationStatus = async (req, res, next) => {
     try {
@@ -36,4 +50,4 @@ const updateReservationStatus = async (req, res, next) => {
     }
 };
 
-module.exports = { createReservation, getAllReservations, updateReservationStatus };
+module.exports = { createReservation, getAllReservations, updateReservationStatus, getUserReservations };
