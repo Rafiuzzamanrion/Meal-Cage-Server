@@ -10,7 +10,7 @@ const {
 const router = express.Router();
 
 // POST /reservation — create reservation
-router.post('/reservation', createReservation);
+router.post('/reservation', verifyJWT, createReservation);
 
 // GET /bookingsHistory — all reservations (admin)
 router.get('/bookingsHistory', verifyJWT, verifyAdmin, getAllReservations);

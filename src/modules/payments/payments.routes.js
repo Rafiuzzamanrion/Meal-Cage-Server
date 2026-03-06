@@ -13,12 +13,12 @@ const {
 
 const router = express.Router();
 
-router.post('/create-payment-intent', createPaymentIntent);
-router.post('/payments', savePayment);
-router.get('/payments', getPaymentHistory);
-router.get('/paymentHistory', getPaymentHistoryAlias);
+router.post('/create-payment-intent', verifyJWT, createPaymentIntent);
+router.post('/payments', verifyJWT, savePayment);
+router.get('/payments', verifyJWT, getPaymentHistory);
+router.get('/paymentHistory', verifyJWT, getPaymentHistoryAlias);
 router.get('/admin-states', verifyJWT, verifyAdmin, getAdminStats);
 router.get('/chart-data', verifyJWT, verifyAdmin, getChartDataAdmin);
-router.get('/chart-data-user', getChartDataUser);
+router.get('/chart-data-user', verifyJWT, getChartDataUser);
 
 module.exports = router;

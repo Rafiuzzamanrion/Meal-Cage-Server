@@ -8,6 +8,8 @@ const reservationSchema = new mongoose.Schema(
         date: { type: String },
         time: { type: String },
         guests: { type: Number, min: 1 },
+        price: { type: Number, default: 0 },
+        quantity: { type: Number, default: 0 },
         specialRequests: { type: String, trim: true },
         status: {
             type: String,
