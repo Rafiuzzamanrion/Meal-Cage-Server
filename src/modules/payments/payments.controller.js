@@ -38,8 +38,18 @@ const savePayment = async (req, res, next) => {
 // GET /payments?email= — payment history for a user
 const getPaymentHistory = async (req, res, next) => {
     try {
-        const { email } = req.query;
-        const filter = email ? { email } : {};
+        const { email, search, status } = req.query;
+        const filter = {};
+        
+        if (email) filter.email = email;
+        if (status) filter.status = status;
+        if (search) {
+            filter.$or = [
+                { transactionId: { $regex: search, $options: 'i' } },
+                { foodNames: { $regex: search, $options: 'i' } }
+            ];
+        }
+
         const payments = await Payment.find(filter).sort({ createdAt: -1 });
         res.json(payments);
     } catch (err) {
