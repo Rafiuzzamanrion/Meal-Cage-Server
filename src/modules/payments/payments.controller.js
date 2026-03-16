@@ -89,24 +89,54 @@ const getAdminStats = async (req, res, next) => {
         const reservationConfirmRate = reservationsCount > 0
             ? parseFloat(((confirmedReservations / reservationsCount) * 100).toFixed(1))
             : 0;
+            
+        const resStatusCount = {};
+        reservationsAll.forEach(r => {
+            const rawStatus = r.status || 'unknown';
+            const statusKey = rawStatus.charAt(0).toUpperCase() + rawStatus.slice(1);
+            resStatusCount[statusKey] = (resStatusCount[statusKey] || 0) + 1;
+        });
+        const reservationStatusData = Object.entries(resStatusCount).map(([name, value]) => ({ name, value }));
 
         // Repeat customers (users with >1 payment)
         const emailOrderCount = {};
         payments.forEach(p => { emailOrderCount[p.email] = (emailOrderCount[p.email] || 0) + 1; });
         const repeatCustomers = Object.values(emailOrderCount).filter(c => c > 1).length;
 
-        // Most popular dish (by frequency in foodNames)
+        // Most popular dish and Top 5 dishes
         const dishCount = {};
         payments.forEach(p => (p.foodNames || []).forEach(name => {
             dishCount[name] = (dishCount[name] || 0) + 1;
         }));
-        const topDish = Object.entries(dishCount).sort((a, b) => b[1] - a[1])[0];
+        const sortedDishes = Object.entries(dishCount).sort((a, b) => b[1] - a[1]);
+        const topDish = sortedDishes[0];
         const mostPopularDish = topDish ? { name: topDish[0], orders: topDish[1] } : null;
+        const topDishes = sortedDishes.slice(0, 5).map(d => ({ name: d[0], orders: d[1] }));
 
         // Loyalty tier distribution
         const tierCount = { Bronze: 0, Silver: 0, Gold: 0, Platinum: 0 };
         allLoyalty.forEach(l => { if (tierCount[l.tier] !== undefined) tierCount[l.tier]++; });
         const loyaltyTierDistribution = Object.entries(tierCount).map(([tier, count]) => ({ tier, count }));
+
+        // Time of Day and Day of Week distributions
+        const timeOfDayCount = { Morning: 0, Lunch: 0, Afternoon: 0, Dinner: 0, Night: 0 };
+        const dayOfWeekCount = { Sun: 0, Mon: 0, Tue: 0, Wed: 0, Thu: 0, Fri: 0, Sat: 0 };
+        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+        payments.forEach(p => {
+            const date = new Date(p.createdAt);
+            const hour = date.getHours();
+            if (hour >= 6 && hour < 11) timeOfDayCount.Morning++;
+            else if (hour >= 11 && hour < 14) timeOfDayCount.Lunch++;
+            else if (hour >= 14 && hour < 17) timeOfDayCount.Afternoon++;
+            else if (hour >= 17 && hour < 22) timeOfDayCount.Dinner++;
+            else timeOfDayCount.Night++;
+            
+            const dayIdx = date.getDay();
+            if (dayIdx >= 0 && dayIdx <= 6) dayOfWeekCount[days[dayIdx]]++;
+        });
+        const salesByTimeOfDay = Object.entries(timeOfDayCount).map(([time, count]) => ({ time, count }));
+        const salesByDayOfWeek = Object.entries(dayOfWeekCount).map(([day, count]) => ({ day, count }));
 
         // Monthly revenue for last 6 months
         const now = new Date();
@@ -127,6 +157,25 @@ const getAdminStats = async (req, res, next) => {
             });
         }
 
+        // Recent 7 Days Sales History
+        const recentSalesHistory = [];
+        for (let i = 6; i >= 0; i--) {
+            const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+            const start = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+            const end = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+            
+            const dayPayments = payments.filter(p => {
+                const pd = new Date(p.createdAt);
+                return pd >= start && pd < end;
+            });
+            const dayTotal = dayPayments.reduce((sum, p) => sum + (p.price || 0), 0);
+            recentSalesHistory.push({
+                date: start.toLocaleDateString('default', { month: 'short', day: 'numeric' }),
+                revenue: parseFloat(dayTotal.toFixed(2)),
+                orders: dayPayments.length
+            });
+        }
+
         res.json({
             users: usersCount,
             menuItems: menuCount,
@@ -142,8 +191,13 @@ const getAdminStats = async (req, res, next) => {
             cartItems: cartCount,
             repeatCustomers,
             mostPopularDish,
+            topDishes,
             loyaltyTierDistribution,
+            salesByTimeOfDay,
+            salesByDayOfWeek,
             monthlyRevenue,
+            recentSalesHistory,
+            reservationStatusData,
         });
     } catch (err) {
         next(err);
