@@ -60,14 +60,91 @@ const getPaymentHistory = async (req, res, next) => {
 // GET /admin-states — admin dashboard stats
 const getAdminStats = async (req, res, next) => {
     try {
-        const [usersCount, menuCount, ordersCount, payments] = await Promise.all([
+        const Reservation = require('../../models/Reservation');
+        const Review = require('../../models/Review');
+        const Cart = require('../../models/Cart');
+        const LoyaltyPoints = require('../../models/LoyaltyPoints');
+
+        const [usersCount, menuCount, ordersCount, payments, reservationsAll, reviewsData, cartCount, allLoyalty] = await Promise.all([
             require('../../models/User').countDocuments(),
             Menu.countDocuments(),
             Payment.countDocuments(),
-            Payment.find({}, 'price'),
+            Payment.find({}, 'price createdAt email foodId foodNames'),
+            Reservation.find({}, 'status createdAt'),
+            Review.find({}, 'rating'),
+            Cart.countDocuments(),
+            LoyaltyPoints.find({}, 'tier points'),
         ]);
+
         const revenue = payments.reduce((sum, p) => sum + (p.price || 0), 0);
-        res.json({ users: usersCount, menuItems: menuCount, orders: ordersCount, revenue });
+        const avgOrderValue = ordersCount > 0 ? revenue / ordersCount : 0;
+        const avgRating = reviewsData.length > 0
+            ? reviewsData.reduce((sum, r) => sum + (r.rating || 0), 0) / reviewsData.length
+            : 0;
+
+        // Reservation breakdown
+        const reservationsCount = reservationsAll.length;
+        const pendingReservations = reservationsAll.filter(r => r.status === 'pending').length;
+        const confirmedReservations = reservationsAll.filter(r => r.status === 'confirmed').length;
+        const reservationConfirmRate = reservationsCount > 0
+            ? parseFloat(((confirmedReservations / reservationsCount) * 100).toFixed(1))
+            : 0;
+
+        // Repeat customers (users with >1 payment)
+        const emailOrderCount = {};
+        payments.forEach(p => { emailOrderCount[p.email] = (emailOrderCount[p.email] || 0) + 1; });
+        const repeatCustomers = Object.values(emailOrderCount).filter(c => c > 1).length;
+
+        // Most popular dish (by frequency in foodNames)
+        const dishCount = {};
+        payments.forEach(p => (p.foodNames || []).forEach(name => {
+            dishCount[name] = (dishCount[name] || 0) + 1;
+        }));
+        const topDish = Object.entries(dishCount).sort((a, b) => b[1] - a[1])[0];
+        const mostPopularDish = topDish ? { name: topDish[0], orders: topDish[1] } : null;
+
+        // Loyalty tier distribution
+        const tierCount = { Bronze: 0, Silver: 0, Gold: 0, Platinum: 0 };
+        allLoyalty.forEach(l => { if (tierCount[l.tier] !== undefined) tierCount[l.tier]++; });
+        const loyaltyTierDistribution = Object.entries(tierCount).map(([tier, count]) => ({ tier, count }));
+
+        // Monthly revenue for last 6 months
+        const now = new Date();
+        const monthlyRevenue = [];
+        for (let i = 5; i >= 0; i--) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const start = new Date(d.getFullYear(), d.getMonth(), 1);
+            const end = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+            const monthPayments = payments.filter(p => {
+                const pd = new Date(p.createdAt);
+                return pd >= start && pd < end;
+            });
+            const monthTotal = monthPayments.reduce((sum, p) => sum + (p.price || 0), 0);
+            monthlyRevenue.push({
+                month: start.toLocaleString('default', { month: 'short' }),
+                revenue: parseFloat(monthTotal.toFixed(2)),
+                orders: monthPayments.length,
+            });
+        }
+
+        res.json({
+            users: usersCount,
+            menuItems: menuCount,
+            orders: ordersCount,
+            revenue: parseFloat(revenue.toFixed(2)),
+            reservations: reservationsCount,
+            pendingReservations,
+            confirmedReservations,
+            reservationConfirmRate,
+            avgOrderValue: parseFloat(avgOrderValue.toFixed(2)),
+            reviews: reviewsData.length,
+            avgRating: parseFloat(avgRating.toFixed(1)),
+            cartItems: cartCount,
+            repeatCustomers,
+            mostPopularDish,
+            loyaltyTierDistribution,
+            monthlyRevenue,
+        });
     } catch (err) {
         next(err);
     }
