@@ -85,7 +85,7 @@ const getAdminStats = async (req, res, next) => {
         // Reservation breakdown
         const reservationsCount = reservationsAll.length;
         const pendingReservations = reservationsAll.filter(r => r.status === 'pending').length;
-        const confirmedReservations = reservationsAll.filter(r => r.status === 'confirmed').length;
+        const confirmedReservations = reservationsAll.filter(r => ['confirmed', 'delivered'].includes(r.status)).length;
         const reservationConfirmRate = reservationsCount > 0
             ? parseFloat(((confirmedReservations / reservationsCount) * 100).toFixed(1))
             : 0;
