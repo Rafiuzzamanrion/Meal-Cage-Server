@@ -60,117 +60,152 @@ const getPaymentHistory = async (req, res, next) => {
 // GET /admin-states — admin dashboard stats
 const getAdminStats = async (req, res, next) => {
     try {
+        const User = require('../../models/User');
         const Reservation = require('../../models/Reservation');
         const Review = require('../../models/Review');
         const Cart = require('../../models/Cart');
         const LoyaltyPoints = require('../../models/LoyaltyPoints');
 
-        const [usersCount, menuCount, ordersCount, payments, reservationsAll, reviewsData, cartCount, allLoyalty] = await Promise.all([
-            require('../../models/User').countDocuments(),
+        const sixMonthsAgo = new Date();
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+        // Fetch everything optimally in parallel
+        const [
+            usersCount,
+            menuCount,
+            cartCount,
+            ordersCount,
+            paymentStatsAgg,
+            reviewStatsAgg,
+            repeatCustAgg,
+            topDishesAgg,
+            reservationStatusAgg,
+            loyaltyDistributionAgg,
+            recentPayData
+        ] = await Promise.all([
+            User.countDocuments(),
             Menu.countDocuments(),
-            Payment.countDocuments(),
-            Payment.find({}, 'price createdAt email foodId foodNames'),
-            Reservation.find({}, 'status createdAt'),
-            Review.find({}, 'rating'),
             Cart.countDocuments(),
-            LoyaltyPoints.find({}, 'tier points'),
+            Payment.countDocuments(),
+            // 1. Core Revenue Aggregation
+            Payment.aggregate([
+                {$group: {_id: null, revenue: {$sum: '$price'}, avgOrderValue: {$avg: '$price'}}}
+            ]),
+            // 2. Reviews Aggregation
+            Review.aggregate([
+                {$group: {_id: null, avgRating: {$avg: '$rating'}, totalReviews: {$sum: 1}}}
+            ]),
+            // 3. Repeat Customers
+            Payment.aggregate([
+                {$group: {_id: '$email', count: {$sum: 1}}},
+                {$match: {count: {$gt: 1}}},
+                {$count: 'repeatCustomers'}
+            ]),
+            // 4. Most Popular Dishes
+            Payment.aggregate([
+                {$unwind: '$foodNames'},
+                {$group: {_id: '$foodNames', orders: {$sum: 1}}},
+                {$sort: {orders: -1}},
+                {$limit: 5}
+            ]),
+            // 5. General Status Metrics
+            Reservation.aggregate([{$group: {_id: '$status', count: {$sum: 1}}}]),
+            LoyaltyPoints.aggregate([{$group: {_id: '$tier', count: {$sum: 1}}}]),
+
+            // 6. Time Series Data (Limit to recent 6 months to prevent Out Of Memory on massive dataset)
+            Payment.find({createdAt: {$gte: sixMonthsAgo}}, 'price createdAt email').lean()
         ]);
 
-        const revenue = payments.reduce((sum, p) => sum + (p.price || 0), 0);
-        const avgOrderValue = ordersCount > 0 ? revenue / ordersCount : 0;
-        const avgRating = reviewsData.length > 0
-            ? reviewsData.reduce((sum, r) => sum + (r.rating || 0), 0) / reviewsData.length
-            : 0;
+        // Process Database Aggregation Results
+        const revenue = paymentStatsAgg.length > 0 ? paymentStatsAgg[0].revenue : 0;
+        const avgOrderValue = paymentStatsAgg.length > 0 ? paymentStatsAgg[0].avgOrderValue : 0;
 
-        // Reservation breakdown
-        const reservationsCount = reservationsAll.length;
-        const pendingReservations = reservationsAll.filter(r => r.status === 'pending').length;
-        const confirmedReservations = reservationsAll.filter(r => ['confirmed', 'delivered'].includes(r.status)).length;
-        const reservationConfirmRate = reservationsCount > 0
-            ? parseFloat(((confirmedReservations / reservationsCount) * 100).toFixed(1))
-            : 0;
-            
+        const reviews = reviewStatsAgg.length > 0 ? reviewStatsAgg[0].totalReviews : 0;
+        const avgRating = reviewStatsAgg.length > 0 ? reviewStatsAgg[0].avgRating : 0;
+
+        const repeatCustomers = repeatCustAgg.length > 0 ? repeatCustAgg[0].repeatCustomers : 0;
+
+        const topDishes = topDishesAgg.map(d => ({name: d._id, orders: d.orders}));
+        const mostPopularDish = topDishes.length > 0 ? topDishes[0] : null;
+
+        // Process Reservations
+        let reservationsCount = 0;
+        let pendingReservations = 0;
+        let confirmedReservations = 0;
         const resStatusCount = {};
-        reservationsAll.forEach(r => {
-            const rawStatus = r.status || 'unknown';
-            const statusKey = rawStatus.charAt(0).toUpperCase() + rawStatus.slice(1);
-            resStatusCount[statusKey] = (resStatusCount[statusKey] || 0) + 1;
+
+        reservationStatusAgg.forEach(r => {
+            const count = r.count;
+            reservationsCount += count;
+            const statusStr = (r._id || 'unknown').toLowerCase();
+
+            if (statusStr === 'pending') pendingReservations += count;
+            if (['confirmed', 'delivered'].includes(statusStr)) confirmedReservations += count;
+
+            const statusKey = statusStr.charAt(0).toUpperCase() + statusStr.slice(1);
+            resStatusCount[statusKey] = (resStatusCount[statusKey] || 0) + count;
         });
-        const reservationStatusData = Object.entries(resStatusCount).map(([name, value]) => ({ name, value }));
 
-        // Repeat customers (users with >1 payment)
-        const emailOrderCount = {};
-        payments.forEach(p => { emailOrderCount[p.email] = (emailOrderCount[p.email] || 0) + 1; });
-        const repeatCustomers = Object.values(emailOrderCount).filter(c => c > 1).length;
+        const reservationStatusData = Object.entries(resStatusCount).map(([name, value]) => ({name, value}));
+        const reservationConfirmRate = reservationsCount > 0
+          ? parseFloat(((confirmedReservations / reservationsCount) * 100).toFixed(1))
+          : 0;
 
-        // Most popular dish and Top 5 dishes
-        const dishCount = {};
-        payments.forEach(p => (p.foodNames || []).forEach(name => {
-            dishCount[name] = (dishCount[name] || 0) + 1;
-        }));
-        const sortedDishes = Object.entries(dishCount).sort((a, b) => b[1] - a[1]);
-        const topDish = sortedDishes[0];
-        const mostPopularDish = topDish ? { name: topDish[0], orders: topDish[1] } : null;
-        const topDishes = sortedDishes.slice(0, 5).map(d => ({ name: d[0], orders: d[1] }));
+        // Process Loyalty Distribution
+        const tierCountMap = {Bronze: 0, Silver: 0, Gold: 0, Platinum: 0};
+        loyaltyDistributionAgg.forEach(l => {
+            if (l._id && tierCountMap[l._id] !== undefined) tierCountMap[l._id] = l.count;
+        });
+        const loyaltyTierDistribution = Object.entries(tierCountMap).map(([tier, count]) => ({tier, count}));
 
-        // Loyalty tier distribution
-        const tierCount = { Bronze: 0, Silver: 0, Gold: 0, Platinum: 0 };
-        allLoyalty.forEach(l => { if (tierCount[l.tier] !== undefined) tierCount[l.tier]++; });
-        const loyaltyTierDistribution = Object.entries(tierCount).map(([tier, count]) => ({ tier, count }));
-
-        // Time of Day and Day of Week distributions
-        const timeOfDayCount = { Morning: 0, Lunch: 0, Afternoon: 0, Dinner: 0, Night: 0 };
-        const dayOfWeekCount = { Sun: 0, Mon: 0, Tue: 0, Wed: 0, Thu: 0, Fri: 0, Sat: 0 };
+        // Process Detailed Time Metrics efficiently using JS dates logic
+        const timeOfDayCount = {Morning: 0, Lunch: 0, Afternoon: 0, Dinner: 0, Night: 0};
+        const dayOfWeekCount = {Sun: 0, Mon: 0, Tue: 0, Wed: 0, Thu: 0, Fri: 0, Sat: 0};
         const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-        payments.forEach(p => {
-            const date = new Date(p.createdAt);
-            const hour = date.getHours();
+        recentPayData.forEach(p => {
+            const hour = p.createdAt.getHours();
             if (hour >= 6 && hour < 11) timeOfDayCount.Morning++;
             else if (hour >= 11 && hour < 14) timeOfDayCount.Lunch++;
             else if (hour >= 14 && hour < 17) timeOfDayCount.Afternoon++;
             else if (hour >= 17 && hour < 22) timeOfDayCount.Dinner++;
             else timeOfDayCount.Night++;
-            
-            const dayIdx = date.getDay();
+
+            const dayIdx = p.createdAt.getDay();
             if (dayIdx >= 0 && dayIdx <= 6) dayOfWeekCount[days[dayIdx]]++;
         });
-        const salesByTimeOfDay = Object.entries(timeOfDayCount).map(([time, count]) => ({ time, count }));
-        const salesByDayOfWeek = Object.entries(dayOfWeekCount).map(([day, count]) => ({ day, count }));
 
-        // Monthly revenue for last 6 months
+        const salesByTimeOfDay = Object.entries(timeOfDayCount).map(([time, count]) => ({time, count}));
+        const salesByDayOfWeek = Object.entries(dayOfWeekCount).map(([day, count]) => ({day, count}));
+
+        // Monthly revenue for last 6 months (safely creating gaps for empty months in JS)
         const now = new Date();
         const monthlyRevenue = [];
         for (let i = 5; i >= 0; i--) {
-            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-            const start = new Date(d.getFullYear(), d.getMonth(), 1);
-            const end = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-            const monthPayments = payments.filter(p => {
-                const pd = new Date(p.createdAt);
-                return pd >= start && pd < end;
-            });
+            const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+
+            const monthPayments = recentPayData.filter(p => p.createdAt >= start && p.createdAt < end);
             const monthTotal = monthPayments.reduce((sum, p) => sum + (p.price || 0), 0);
+
             monthlyRevenue.push({
-                month: start.toLocaleString('default', { month: 'short' }),
+                month: start.toLocaleString('default', {month: 'short'}),
                 revenue: parseFloat(monthTotal.toFixed(2)),
                 orders: monthPayments.length,
             });
         }
 
-        // Recent 7 Days Sales History
+        // Recent 7 Days Sales History (safely creating gaps for empty days in JS)
         const recentSalesHistory = [];
         for (let i = 6; i >= 0; i--) {
-            const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-            const start = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-            const end = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
-            
-            const dayPayments = payments.filter(p => {
-                const pd = new Date(p.createdAt);
-                return pd >= start && pd < end;
-            });
+            const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+            const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i + 1);
+
+            const dayPayments = recentPayData.filter(p => p.createdAt >= start && p.createdAt < end);
             const dayTotal = dayPayments.reduce((sum, p) => sum + (p.price || 0), 0);
+
             recentSalesHistory.push({
-                date: start.toLocaleDateString('default', { month: 'short', day: 'numeric' }),
+                date: start.toLocaleDateString('default', {month: 'short', day: 'numeric'}),
                 revenue: parseFloat(dayTotal.toFixed(2)),
                 orders: dayPayments.length
             });
@@ -186,7 +221,7 @@ const getAdminStats = async (req, res, next) => {
             confirmedReservations,
             reservationConfirmRate,
             avgOrderValue: parseFloat(avgOrderValue.toFixed(2)),
-            reviews: reviewsData.length,
+            reviews,
             avgRating: parseFloat(avgRating.toFixed(1)),
             cartItems: cartCount,
             repeatCustomers,
@@ -219,10 +254,29 @@ const getChartDataAdmin = async (req, res, next) => {
 // GET /chart-data-user?email= — user chart: menu items from user's payments
 const getChartDataUser = async (req, res, next) => {
     try {
-        const { email } = req.query;
-        const paymentsData = await Payment.find({ email }, 'foodId');
-        const foodIds = paymentsData.flatMap((p) => p.foodId || []);
-        const menuItems = await Menu.find({ _id: { $in: foodIds } });
+        const {email} = req.query;
+        const menuItems = await Payment.aggregate([
+            {
+                $match: {email}
+            },
+            {
+                $sort: {createdAt: -1}
+            },
+            {
+                $lookup: {
+                    from: 'menus',
+                    localField: 'foodId',
+                    foreignField: '_id',
+                    as: 'menuItems'
+                }
+            },
+            {
+                $unwind: {
+                    path: '$menuItems',
+                    preserveNullAndEmptyArrays: true
+                }
+            },
+        ]);
         res.json(menuItems);
     } catch (err) {
         next(err);
